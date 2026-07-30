@@ -12,6 +12,7 @@ import {
   pendingRefs,
   summarize,
   formatReportCard,
+  chunk,
 } from "./post-grades-core.mjs";
 import { parsePostFile, postRefFor } from "./grade-sweep.mjs";
 
@@ -178,4 +179,20 @@ test("postRefFor produces a stable relative ref regardless of path separators", 
   assert.equal(postRefFor(win), "distribution/scheduled/2026-07-02_linkedin_fednow-deposit-rails.md");
   const nix = "/c/Users/me/Desktop/clients/noah-finance/distribution/published/2026-07-10_linkedin_x.md";
   assert.equal(postRefFor(nix), "distribution/published/2026-07-10_linkedin_x.md");
+});
+
+test("chunk splits an exact multiple into equal groups", () => {
+  assert.deepEqual(chunk([1, 2, 3, 4, 5, 6], 2), [[1, 2], [3, 4], [5, 6]]);
+});
+
+test("chunk puts the remainder in a shorter final group", () => {
+  assert.deepEqual(chunk([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
+});
+
+test("chunk returns an empty array for empty input", () => {
+  assert.deepEqual(chunk([], 10), []);
+});
+
+test("chunk returns a single group when size exceeds the array length", () => {
+  assert.deepEqual(chunk([1, 2, 3], 10), [[1, 2, 3]]);
 });

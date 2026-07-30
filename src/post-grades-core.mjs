@@ -87,6 +87,19 @@ export function pendingRefs(diskRefs, gradedRefs) {
   return out;
 }
 
+/**
+ * Split an array into consecutive groups of at most `size` items, order
+ * preserved. Used by the sweep to chunk Supabase inserts into small batches
+ * instead of one bulk call; see grade-sweep.mjs for why that matters.
+ */
+export function chunk(array, size) {
+  const out = [];
+  for (let i = 0; i < array.length; i += size) {
+    out.push(array.slice(i, i + size));
+  }
+  return out;
+}
+
 const round1 = (n) => Math.round(n * 10) / 10;
 
 /** Aggregate grade rows. Returns null when there is nothing to aggregate. */
