@@ -1,0 +1,147 @@
+// Pure grading math for the post report card. No I/O, no LLM, no Supabase, so
+// every rule here is testable and the weekly number Noah reads cannot drift.
+// Judgment (what a post actually scores) lives in the rubric file and the
+// grade-posts skill. This module only counts, bands, filters and formats.
+
+export const RUBRIC_VERSION = "v1";
+
+export const DIMENSIONS = ["hook", "voice", "clarity", "icp", "structure", "closer"];
+
+const MAX_PER_DIMENSION = 5;
+// Discord's hard limit is 2000; notify.mjs already trims to 1900. Format to the
+// same bar so a long week is truncated here, where it is tested, not silently
+// there.
+const DISCORD_BUDGET = 1900;
+
+const BANDS = [
+  [27, "A"],
+  [23, "B"],
+  [18, "C"],
+  [12, "D"],
+];
+
+/** Letter band for a 0-30 total. */
+export function bandFor(total) {
+  for (const [floor, letter] of BANDS) {
+    if (total >= floor) return letter;
+  }
+  return "F";
+}
+
+/**
+ * Validate an LLM-produced score object into exactly the six dimensions.
+ * Throws rather than coercing: a malformed grade must not land in the table as
+ * a quiet zero, because zeros drag the trend Noah reads.
+ */
+export function normalizeScores(raw) {
+  if (raw === null || typeof raw !== "object") {
+    throw new Error("scores must be an object");
+  }
+  const out = {};
+  for (const dim of DIMENSIONS) {
+    if (!(dim in raw)) throw new Error(`scores missing dimension: ${dim}`);
+    const value = raw[dim];
+    if (!Number.isInteger(value) || value < 0 || value > MAX_PER_DIMENSION) {
+      throw new Error(`${dim} must be an integer 0 to ${MAX_PER_DIMENSION}, got ${JSON.stringify(value)}`);
+    }
+    out[dim] = value;
+  }
+  return out;
+}
+
+/** Sum of the six dimensions, 0 to 30. */
+export function overallOf(scores) {
+  return DIMENSIONS.reduce((sum, dim) => sum + scores[dim], 0);
+}
+
+/**
+ * Disk refs that have no grade row yet, order preserved and deduped. This is
+ * what makes the sweep idempotent: run it twice and the second run writes zero.
+ */
+export function pendingRefs(diskRefs, gradedRefs) {
+  const graded = new Set(gradedRefs);
+  const seen = new Set();
+  const out = [];
+  for (const ref of diskRefs) {
+    if (graded.has(ref) || seen.has(ref)) continue;
+    seen.add(ref);
+    out.push(ref);
+  }
+  return out;
+}
+
+const round1 = (n) => Math.round(n * 10) / 10;
+
+/** Aggregate grade rows. Returns null when there is nothing to aggregate. */
+export function summarize(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+
+  const byDimension = {};
+  for (const dim of DIMENSIONS) {
+    const total = rows.reduce((sum, row) => sum + row.scores[dim], 0);
+    byDimension[dim] = round1(total / rows.length);
+  }
+
+  // Ties are broken by taking the latest dimension in DIMENSIONS order. We
+  // start with the last dimension and update only on strict <, so ties keep
+  // the initial value.
+  const weakestDim = DIMENSIONS.reduce((worst, dim) =>
+    byDimension[dim] < byDimension[worst] ? dim : worst,
+    DIMENSIONS[DIMENSIONS.length - 1]
+  );
+
+  const avgOverall = round1(rows.reduce((sum, row) => sum + row.overall, 0) / rows.length);
+
+  return {
+    count: rows.length,
+    avgOverall,
+    byDimension,
+    weakest: { dim: weakestDim, avg: byDimension[weakestDim] },
+  };
+}
+
+const signed = (n) => (n > 0 ? `+${round1(n)}` : `${round1(n)}`);
+
+/**
+ * The weekly Discord message. Built to a character budget: the header, summary
+ * and trend are always kept, and the per-post list is truncated to fit.
+ */
+export function formatReportCard({ summary, recent = [], prevSummary = null, skipped = [] }) {
+  const lines = ["**Post report card**"];
+
+  if (!summary) {
+    lines.push("", "Nothing new to grade this week.");
+    if (skipped.length) lines.push("", `Skipped (unparseable): ${skipped.join(", ")}`);
+    return lines.join("\n").slice(0, DISCORD_BUDGET);
+  }
+
+  const trend = prevSummary ? ` (${signed(summary.avgOverall - prevSummary.avgOverall)} vs last period)` : "";
+  lines.push(
+    "",
+    `${summary.count} post${summary.count === 1 ? "" : "s"} graded, average ${summary.avgOverall}/30 = ${bandFor(Math.round(summary.avgOverall))}${trend}`,
+    `Weakest dimension: ${summary.weakest.dim} at ${summary.weakest.avg}/5`,
+    "",
+    DIMENSIONS.map((dim) => `${dim} ${summary.byDimension[dim]}`).join("  |  "),
+  );
+
+  const head = lines.join("\n");
+  const tail = skipped.length ? `\n\nSkipped (unparseable): ${skipped.join(", ")}` : "";
+
+  const postLines = [];
+  let used = head.length + tail.length + 2;
+  for (const row of recent) {
+    const note = row.notes ? `: ${row.notes}` : "";
+    const line = `${row.grade} ${row.overall}/30  ${row.post_title}${note}`;
+    if (used + line.length + 1 > DISCORD_BUDGET) {
+      const remaining = recent.length - postLines.length;
+      const more = `...and ${remaining} more`;
+      if (used + more.length + 1 <= DISCORD_BUDGET) postLines.push(more);
+      break;
+    }
+    postLines.push(line);
+    used += line.length + 1;
+  }
+
+  const body = postLines.length ? `${head}\n\n${postLines.join("\n")}` : head;
+  return `${body}${tail}`.slice(0, DISCORD_BUDGET);
+}
