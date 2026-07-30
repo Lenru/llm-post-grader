@@ -1,11 +1,14 @@
-﻿import { test } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   DIMENSIONS,
   RUBRIC_VERSION,
+  RAW_TOTAL,
+  SCORE_MAX,
   bandFor,
   normalizeScores,
   overallOf,
+  rawTotalOf,
   pendingRefs,
   summarize,
   formatReportCard,
@@ -19,16 +22,16 @@ test("DIMENSIONS is the six keys in fixed order", () => {
   assert.equal(RUBRIC_VERSION, "v1");
 });
 
-test("bandFor maps totals to bands at the documented edges", () => {
-  assert.equal(bandFor(30), "A");
-  assert.equal(bandFor(27), "A");
-  assert.equal(bandFor(26), "B");
-  assert.equal(bandFor(23), "B");
-  assert.equal(bandFor(22), "C");
-  assert.equal(bandFor(18), "C");
-  assert.equal(bandFor(17), "D");
-  assert.equal(bandFor(12), "D");
-  assert.equal(bandFor(11), "F");
+test("bandFor maps 0-100 scores to bands at the documented edges", () => {
+  assert.equal(bandFor(100), "A");
+  assert.equal(bandFor(90), "A");
+  assert.equal(bandFor(89), "B");
+  assert.equal(bandFor(80), "B");
+  assert.equal(bandFor(79), "C");
+  assert.equal(bandFor(70), "C");
+  assert.equal(bandFor(69), "D");
+  assert.equal(bandFor(60), "D");
+  assert.equal(bandFor(59), "F");
   assert.equal(bandFor(0), "F");
 });
 
@@ -45,9 +48,20 @@ test("normalizeScores rejects missing keys, out of range, and non-integers", () 
   assert.throws(() => normalizeScores({ ...full, icp: "3" }), /icp/);
 });
 
-test("overallOf sums the six dimensions", () => {
-  assert.equal(overallOf(full), 30);
-  assert.equal(overallOf({ hook: 1, voice: 2, clarity: 3, icp: 0, structure: 4, closer: 5 }), 15);
+test("rawTotalOf still returns the plain 0-30 sum", () => {
+  assert.equal(rawTotalOf(full), 30);
+  assert.equal(rawTotalOf({ hook: 1, voice: 2, clarity: 3, icp: 0, structure: 4, closer: 5 }), 15);
+});
+
+test("overallOf converts the raw sum to a 0-100 score", () => {
+  assert.equal(overallOf(full), 100);
+  // raw 15 / 30 * 100 = 50
+  assert.equal(overallOf({ hook: 1, voice: 2, clarity: 3, icp: 0, structure: 4, closer: 5 }), 50);
+});
+
+test("RAW_TOTAL and SCORE_MAX are the documented ceilings", () => {
+  assert.equal(RAW_TOTAL, 30);
+  assert.equal(SCORE_MAX, 100);
 });
 
 test("pendingRefs returns disk refs not yet graded, order preserved, deduped", () => {
@@ -62,13 +76,15 @@ test("summarize returns null for no rows", () => {
 });
 
 test("summarize averages overall and each dimension, and names the weakest", () => {
+  // overall values are 0-100, matching what overallOf now produces: full is
+  // 100, and the raw-18 row (4+2+4+3+3+2=18) is 18/30*100 = 60.
   const rows = [
-    { overall: 30, scores: full },
-    { overall: 18, scores: { hook: 4, voice: 2, clarity: 4, icp: 3, structure: 3, closer: 2 } },
+    { overall: 100, scores: full },
+    { overall: 60, scores: { hook: 4, voice: 2, clarity: 4, icp: 3, structure: 3, closer: 2 } },
   ];
   const s = summarize(rows);
   assert.equal(s.count, 2);
-  assert.equal(s.avgOverall, 24);
+  assert.equal(s.avgOverall, 80);
   assert.equal(s.byDimension.hook, 4.5);
   assert.equal(s.byDimension.voice, 3.5);
   // voice and closer both average 3.5; the tie goes to voice, the earlier
@@ -79,13 +95,15 @@ test("summarize averages overall and each dimension, and names the weakest", () 
 });
 
 test("summarize breaks weakest ties by DIMENSIONS order", () => {
-  const rows = [{ overall: 12, scores: { hook: 1, voice: 1, clarity: 3, icp: 3, structure: 2, closer: 2 } }];
+  // raw 1+1+3+3+2+2=12, 12/30*100 = 40.
+  const rows = [{ overall: 40, scores: { hook: 1, voice: 1, clarity: 3, icp: 3, structure: 2, closer: 2 } }];
   assert.equal(summarize(rows).weakest.dim, "hook");
 });
 
 test("formatReportCard names the weakest dimension and stays under the Discord limit", () => {
-  const summary = summarize([{ overall: 24, scores: { hook: 5, voice: 3, clarity: 4, icp: 4, structure: 4, closer: 4 } }]);
-  const recent = [{ post_title: "VW short squeeze", grade: "C", overall: 20, notes: "coined term in the close" }];
+  // raw 5+3+4+4+4+4=24, 24/30*100 = 80.
+  const summary = summarize([{ overall: 80, scores: { hook: 5, voice: 3, clarity: 4, icp: 4, structure: 4, closer: 4 } }]);
+  const recent = [{ post_title: "VW short squeeze", grade: "C", overall: 75, notes: "coined term in the close" }];
   const out = formatReportCard({ summary, recent, prevSummary: null, skipped: [] });
   assert.match(out, /Post report card/);
   assert.match(out, /voice/);
@@ -101,8 +119,8 @@ test("formatReportCard handles an empty week without crashing", () => {
 });
 
 test("formatReportCard shows the trend against the previous period and lists skips", () => {
-  const summary = summarize([{ overall: 24, scores: full }]);
-  const prevSummary = summarize([{ overall: 18, scores: full }]);
+  const summary = summarize([{ overall: 84, scores: full }]);
+  const prevSummary = summarize([{ overall: 78, scores: full }]);
   const out = formatReportCard({ summary, recent: [], prevSummary, skipped: ["2026-07-02_linkedin_broken.md"] });
   assert.match(out, /\+6/);
   assert.match(out, /skipped/i);
@@ -110,11 +128,11 @@ test("formatReportCard shows the trend against the previous period and lists ski
 });
 
 test("formatReportCard truncates a huge recent list rather than exceeding the limit", () => {
-  const summary = summarize([{ overall: 24, scores: full }]);
+  const summary = summarize([{ overall: 84, scores: full }]);
   const recent = Array.from({ length: 60 }, (_, i) => ({
     post_title: `A fairly long post title number ${i} about market structure`,
     grade: "B",
-    overall: 24,
+    overall: 84,
     notes: "a reasonably long note about what cost points on this particular post",
   }));
   const out = formatReportCard({ summary, recent, prevSummary: null, skipped: [] });

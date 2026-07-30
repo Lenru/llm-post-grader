@@ -2,25 +2,37 @@
 // every rule here is testable and the weekly number Noah reads cannot drift.
 // Judgment (what a post actually scores) lives in the rubric file and the
 // grade-posts skill. This module only counts, bands, filters and formats.
+//
+// Two scales are in play, and every function here is explicit about which one
+// it uses: each of the six dimensions is scored 0 to 5 (rubric anchor text is
+// written for that range and stays that way), and those six raw points sum to
+// 0-30 (RAW_TOTAL). The stored and displayed "overall" is that raw sum
+// rescaled to a 0-100 score (SCORE_MAX), because a percentage reads better
+// than a /30 total. Bands (A/B/C/D/F) are school-style cutoffs on the 0-100
+// score, not the raw 0-30 sum.
 
 export const RUBRIC_VERSION = "v1";
 
 export const DIMENSIONS = ["hook", "voice", "clarity", "icp", "structure", "closer"];
 
 const MAX_PER_DIMENSION = 5;
+/** Raw sum ceiling: six dimensions times five points each. Internal use only. */
+export const RAW_TOTAL = 30;
+/** The displayed/stored overall score is rescaled onto this ceiling. */
+export const SCORE_MAX = 100;
 // Discord's hard limit is 2000; notify.mjs already trims to 1900. Format to the
 // same bar so a long week is truncated here, where it is tested, not silently
 // there.
 const DISCORD_BUDGET = 1900;
 
 const BANDS = [
-  [27, "A"],
-  [23, "B"],
-  [18, "C"],
-  [12, "D"],
+  [90, "A"],
+  [80, "B"],
+  [70, "C"],
+  [60, "D"],
 ];
 
-/** Letter band for a 0-30 total. */
+/** Letter band for a 0-100 overall score. */
 export function bandFor(total) {
   for (const [floor, letter] of BANDS) {
     if (total >= floor) return letter;
@@ -49,9 +61,14 @@ export function normalizeScores(raw) {
   return out;
 }
 
-/** Sum of the six dimensions, 0 to 30. */
-export function overallOf(scores) {
+/** Sum of the six dimensions, 0 to 30. Internal use only; not stored or shown. */
+export function rawTotalOf(scores) {
   return DIMENSIONS.reduce((sum, dim) => sum + scores[dim], 0);
+}
+
+/** The stored/displayed overall: the raw 0-30 sum rescaled to 0-100. */
+export function overallOf(scores) {
+  return Math.round((rawTotalOf(scores) / RAW_TOTAL) * SCORE_MAX);
 }
 
 /**
@@ -113,13 +130,18 @@ export function formatReportCard({ summary, recent = [], prevSummary = null, ski
     return lines.join("\n").slice(0, DISCORD_BUDGET);
   }
 
+  // avgOverall is already a 0-100 average (each row.overall is a 0-100 score),
+  // so bandFor(Math.round(summary.avgOverall)) reads it on the same 0-100
+  // scale bandFor expects. No second rescale here.
   const trend = prevSummary ? ` (${signed(summary.avgOverall - prevSummary.avgOverall)} vs last period)` : "";
   lines.push(
     "",
-    `${summary.count} post${summary.count === 1 ? "" : "s"} graded, average ${summary.avgOverall}/30 = ${bandFor(Math.round(summary.avgOverall))}${trend}`,
+    `${summary.count} post${summary.count === 1 ? "" : "s"} graded, average ${summary.avgOverall}/100 = ${bandFor(Math.round(summary.avgOverall))}${trend}`,
     `Weakest dimension: ${summary.weakest.dim} at ${summary.weakest.avg}/5`,
     "",
-    DIMENSIONS.map((dim) => `${dim} ${summary.byDimension[dim]}`).join("  |  "),
+    // Per-dimension detail stays on the 0-5 rubric scale, labeled /5 so it is
+    // never mistaken for a slice of the 0-100 overall.
+    DIMENSIONS.map((dim) => `${dim} ${summary.byDimension[dim]}/5`).join("  |  "),
   );
 
   const head = lines.join("\n");
@@ -129,7 +151,7 @@ export function formatReportCard({ summary, recent = [], prevSummary = null, ski
   let used = head.length + tail.length + 2;
   for (const row of recent) {
     const note = row.notes ? `: ${row.notes}` : "";
-    const line = `${row.grade} ${row.overall}/30  ${row.post_title}${note}`;
+    const line = `${row.grade} ${row.overall}/100  ${row.post_title}${note}`;
     if (used + line.length + 1 > DISCORD_BUDGET) {
       const remaining = recent.length - postLines.length;
       const more = `...and ${remaining} more`;
