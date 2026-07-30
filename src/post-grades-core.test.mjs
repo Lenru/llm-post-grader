@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import {
   DIMENSIONS,
   RUBRIC_VERSION,
@@ -14,7 +17,9 @@ import {
   formatReportCard,
   chunk,
 } from "./post-grades-core.mjs";
-import { parsePostFile, postRefFor } from "./grade-sweep.mjs";
+import { parsePostFile, postRefFor, insertBatchWithRetry } from "./grade-sweep.mjs";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const full = { hook: 5, voice: 5, clarity: 5, icp: 5, structure: 5, closer: 5 };
 
@@ -119,6 +124,25 @@ test("formatReportCard handles an empty week without crashing", () => {
   assert.ok(out.length <= 1900);
 });
 
+test("a quiet week (nothing graded) never presents the prior corpus as this week's work", () => {
+  // Mirrors grade-sweep.mjs's call site directly: summarize(graded), never
+  // summarize(priorRows). A week where everything on disk is already graded
+  // must produce the honest null summary, not the whole standing corpus
+  // dressed up as "N posts graded" for a week that graded zero.
+  const priorRows = [
+    { overall: 80, scores: full },
+    { overall: 60, scores: { hook: 4, voice: 2, clarity: 4, icp: 3, structure: 3, closer: 2 } },
+  ];
+  const graded = [];
+  const summary = summarize(graded);
+  assert.equal(summary, null, "summarize([]) must be null, the fix's whole point");
+  const out = formatReportCard({ summary, recent: [], prevSummary: null, skipped: [] });
+  assert.match(out, /nothing new/i);
+  // The old bug rendered "2 posts graded" (priorRows.length) as this week's
+  // count. Guard against that literal regression.
+  assert.ok(!out.includes(`${priorRows.length} post`), "must not phrase the prior corpus count as work done this week");
+});
+
 test("formatReportCard shows the trend against the previous period and lists skips", () => {
   const summary = summarize([{ overall: 84, scores: full }]);
   const prevSummary = summarize([{ overall: 78, scores: full }]);
@@ -138,6 +162,13 @@ test("formatReportCard truncates a huge recent list rather than exceeding the li
   }));
   const out = formatReportCard({ summary, recent, prevSummary: null, skipped: [] });
   assert.ok(out.length <= 1900, `report card too long: ${out.length}`);
+  // The length check alone is guaranteed by the trailing .slice(0, DISCORD_BUDGET)
+  // regardless of whether the per-post budget loop ever ran, so it does not
+  // prove the loop actually truncated anything. Assert the loop's own output:
+  // the "and N more" marker, and strictly fewer post lines than were passed in.
+  assert.match(out, /and \d+ more/, "truncation marker must be present for 60 recent posts");
+  const postLineCount = recent.filter((r) => out.includes(r.post_title)).length;
+  assert.ok(postLineCount < recent.length, `expected fewer than ${recent.length} post lines to survive, got ${postLineCount}`);
 });
 
 test("parsePostFile strips frontmatter and returns the body plus title", () => {
@@ -176,9 +207,26 @@ test("parsePostFile returns an empty body for a frontmatter-only file so the swe
 
 test("postRefFor produces a stable relative ref regardless of path separators", () => {
   const win = String.raw`C:\Users\me\Desktop\clients\noah-finance\distribution\scheduled\2026-07-02_linkedin_fednow-deposit-rails.md`;
-  assert.equal(postRefFor(win), "distribution/scheduled/2026-07-02_linkedin_fednow-deposit-rails.md");
+  assert.equal(postRefFor(win), "distribution/2026-07-02_linkedin_fednow-deposit-rails.md");
   const nix = "/c/Users/me/Desktop/clients/noah-finance/distribution/published/2026-07-10_linkedin_x.md";
-  assert.equal(postRefFor(nix), "distribution/published/2026-07-10_linkedin_x.md");
+  assert.equal(postRefFor(nix), "distribution/2026-07-10_linkedin_x.md");
+});
+
+test("postRefFor collapses scheduled/ and published/ to the SAME ref for the same basename", () => {
+  // This equality is the whole point of the F7 fix: mark-published moves the
+  // file from distribution/scheduled/ to distribution/published/, and if the
+  // folder survived in the ref, the sweep would see the moved file as a new,
+  // ungraded post and grade (and insert) it a second time.
+  const scheduled = String.raw`C:\Users\me\Desktop\clients\noah-finance\distribution\scheduled\2026-07-15_linkedin_same-post.md`;
+  const published = "/c/Users/me/Desktop/clients/noah-finance/distribution/published/2026-07-15_linkedin_same-post.md";
+  assert.equal(postRefFor(scheduled), "distribution/2026-07-15_linkedin_same-post.md");
+  assert.equal(postRefFor(published), "distribution/2026-07-15_linkedin_same-post.md");
+  assert.equal(postRefFor(scheduled), postRefFor(published));
+});
+
+test("postRefFor leaves script-lab draft refs untouched", () => {
+  const draft = String.raw`C:\Users\me\Desktop\clients\noah-finance\script-lab\linkedin_fednow-deposit-rails_draft.md`;
+  assert.equal(postRefFor(draft), "script-lab/linkedin_fednow-deposit-rails_draft.md");
 });
 
 test("chunk splits an exact multiple into equal groups", () => {
@@ -195,4 +243,81 @@ test("chunk returns an empty array for empty input", () => {
 
 test("chunk returns a single group when size exceeds the array length", () => {
   assert.deepEqual(chunk([1, 2, 3], 10), [[1, 2, 3]]);
+});
+
+// insertBatchWithRetry guards the 2026-07-30 incident: 43 posts graded
+// successfully, then a single bulk INSERT died to a transient
+// `TypeError: fetch failed`, and every graded row was lost even though the
+// grading itself had already succeeded. A minimal fake `sb` stands in for
+// @supabase/supabase-js: `.from(table).insert(batch)` either throws
+// (network-shaped failure, the incident's exact case) or resolves with
+// `{ error }` (Postgres actually answered, e.g. a unique-index conflict).
+// No mocking framework, just a closure over a queue of behaviors.
+function fakeSb(behaviors) {
+  const calls = [];
+  let i = 0;
+  return {
+    calls,
+    from(table) {
+      assert.equal(table, "post_grades");
+      return {
+        async insert(batch) {
+          calls.push(batch);
+          const behavior = behaviors[i++];
+          if (!behavior) throw new Error("fakeSb ran out of scripted behaviors");
+          return behavior();
+        },
+      };
+    },
+  };
+}
+
+test("insertBatchWithRetry: a thrown error is retried and can still succeed", async () => {
+  const sb = fakeSb([
+    () => { throw new TypeError("fetch failed"); },
+    () => { throw new TypeError("fetch failed"); },
+    () => ({ error: null }),
+  ]);
+  const result = await insertBatchWithRetry(sb, [{ id: 1 }]);
+  assert.deepEqual(result, { ok: true });
+  assert.equal(sb.calls.length, 3, "must attempt exactly 3 times: try, retry, retry-succeeds");
+});
+
+test("insertBatchWithRetry: a resolved {error} (constraint violation) is NEVER retried", async () => {
+  // The distinguishing behavior of the fix: a batch that resolves with an
+  // `error` field is Postgres actually answering, a real, deterministic
+  // outcome, not a reachability problem. Retrying it just fails the same way
+  // three times slower, so it must stop after exactly one call.
+  const constraintErr = { message: "duplicate key value violates unique constraint post_grades_published_once_idx" };
+  const sb = fakeSb([() => ({ error: constraintErr })]);
+  const result = await insertBatchWithRetry(sb, [{ id: 1 }]);
+  assert.equal(result.ok, false);
+  assert.equal(result.error, constraintErr);
+  assert.equal(sb.calls.length, 1, "a resolved {error} must not be retried");
+});
+
+test("insertBatchWithRetry: three thrown errors exhaust retries and surface the last one", async () => {
+  const err1 = new TypeError("fetch failed 1");
+  const err2 = new TypeError("fetch failed 2");
+  const err3 = new TypeError("fetch failed 3");
+  const sb = fakeSb([
+    () => { throw err1; },
+    () => { throw err2; },
+    () => { throw err3; },
+  ]);
+  const result = await insertBatchWithRetry(sb, [{ id: 1 }]);
+  assert.equal(result.ok, false);
+  assert.equal(result.error, err3, "must carry the LAST error, not the first");
+  assert.equal(sb.calls.length, 3, "must attempt exactly 3 times total, then give up");
+});
+
+// M4: an unparseable --limit must never silently mean unlimited, which would
+// turn a typo into an expensive surprise (grading the whole corpus when
+// someone meant to cap the run). LIMIT is computed at module load time, so
+// this is exercised via a real subprocess rather than an import.
+test("grade-sweep.mjs exits 1 with a clear message on an unparseable --limit", () => {
+  const script = join(__dirname, "grade-sweep.mjs");
+  const res = spawnSync(process.execPath, [script, "--limit", "abc", "--dry-run"], { encoding: "utf8" });
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /--limit/);
 });
