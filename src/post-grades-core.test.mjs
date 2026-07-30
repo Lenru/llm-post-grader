@@ -19,7 +19,7 @@ const full = { hook: 5, voice: 5, clarity: 5, icp: 5, structure: 5, closer: 5 };
 
 test("DIMENSIONS is the six keys in fixed order", () => {
   assert.deepEqual(DIMENSIONS, ["hook", "voice", "clarity", "icp", "structure", "closer"]);
-  assert.equal(RUBRIC_VERSION, "v1");
+  assert.equal(RUBRIC_VERSION, "v2");
 });
 
 test("bandFor maps 0-100 scores to bands at the documented edges", () => {

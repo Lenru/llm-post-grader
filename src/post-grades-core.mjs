@@ -11,7 +11,7 @@
 // than a /30 total. Bands (A/B/C/D/F) are school-style cutoffs on the 0-100
 // score, not the raw 0-30 sum.
 
-export const RUBRIC_VERSION = "v1";
+export const RUBRIC_VERSION = "v2";
 
 export const DIMENSIONS = ["hook", "voice", "clarity", "icp", "structure", "closer"];
 
