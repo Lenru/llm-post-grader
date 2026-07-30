@@ -10,6 +10,7 @@ import {
   summarize,
   formatReportCard,
 } from "./post-grades-core.mjs";
+import { parsePostFile, postRefFor } from "./grade-sweep.mjs";
 
 const full = { hook: 5, voice: 5, clarity: 5, icp: 5, structure: 5, closer: 5 };
 
@@ -118,4 +119,45 @@ test("formatReportCard truncates a huge recent list rather than exceeding the li
   }));
   const out = formatReportCard({ summary, recent, prevSummary: null, skipped: [] });
   assert.ok(out.length <= 1900, `report card too long: ${out.length}`);
+});
+
+test("parsePostFile strips frontmatter and returns the body plus title", () => {
+  const raw = [
+    "---",
+    "title: FedNow deposit rails",
+    "status: PASS",
+    "---",
+    "",
+    "Instant payments changed the deposit game.",
+    "",
+    "Second paragraph.",
+  ].join("\n");
+  const parsed = parsePostFile(raw);
+  assert.equal(parsed.title, "FedNow deposit rails");
+  assert.match(parsed.body, /^Instant payments/);
+  assert.match(parsed.body, /Second paragraph\./);
+  assert.ok(!parsed.body.includes("status: PASS"));
+});
+
+test("parsePostFile falls back to the first heading when frontmatter has no title", () => {
+  const parsed = parsePostFile("---\nstatus: PASS\n---\n\n# Copper grid buildout\n\nBody text here.");
+  assert.equal(parsed.title, "Copper grid buildout");
+  assert.match(parsed.body, /Body text here/);
+});
+
+test("parsePostFile handles a file with no frontmatter at all", () => {
+  const parsed = parsePostFile("Just a body, no frontmatter.\n");
+  assert.equal(parsed.body.trim(), "Just a body, no frontmatter.");
+});
+
+test("parsePostFile returns an empty body for a frontmatter-only file so the sweep can skip it", () => {
+  const parsed = parsePostFile("---\ntitle: Empty\n---\n\n   \n");
+  assert.equal(parsed.body.trim(), "");
+});
+
+test("postRefFor produces a stable relative ref regardless of path separators", () => {
+  const win = String.raw`C:\Users\me\Desktop\clients\noah-finance\distribution\scheduled\2026-07-02_linkedin_fednow-deposit-rails.md`;
+  assert.equal(postRefFor(win), "distribution/scheduled/2026-07-02_linkedin_fednow-deposit-rails.md");
+  const nix = "/c/Users/me/Desktop/clients/noah-finance/distribution/published/2026-07-10_linkedin_x.md";
+  assert.equal(postRefFor(nix), "distribution/published/2026-07-10_linkedin_x.md");
 });
