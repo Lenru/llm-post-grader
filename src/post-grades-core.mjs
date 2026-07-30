@@ -82,12 +82,10 @@ export function summarize(rows) {
     byDimension[dim] = round1(total / rows.length);
   }
 
-  // Ties are broken by taking the latest dimension in DIMENSIONS order. We
-  // start with the last dimension and update only on strict <, so ties keep
-  // the initial value.
+  // Ties go to the earlier dimension in DIMENSIONS, which is why this is a
+  // reduce over that array and not a sort of Object.entries.
   const weakestDim = DIMENSIONS.reduce((worst, dim) =>
     byDimension[dim] < byDimension[worst] ? dim : worst,
-    DIMENSIONS[DIMENSIONS.length - 1]
   );
 
   const avgOverall = round1(rows.reduce((sum, row) => sum + row.overall, 0) / rows.length);

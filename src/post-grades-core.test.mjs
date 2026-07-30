@@ -1,4 +1,4 @@
-import { test } from "node:test";
+﻿import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   DIMENSIONS,
@@ -70,7 +70,10 @@ test("summarize averages overall and each dimension, and names the weakest", () 
   assert.equal(s.avgOverall, 24);
   assert.equal(s.byDimension.hook, 4.5);
   assert.equal(s.byDimension.voice, 3.5);
-  assert.equal(s.weakest.dim, "closer");
+  // voice and closer both average 3.5; the tie goes to voice, the earlier
+  // dimension in DIMENSIONS. Asserting "closer" here would demand an
+  // incoherent rule, since the sibling test below requires earliest-wins.
+  assert.equal(s.weakest.dim, "voice");
   assert.equal(s.weakest.avg, 3.5);
 });
 
@@ -87,7 +90,7 @@ test("formatReportCard names the weakest dimension and stays under the Discord l
   assert.match(out, /voice/);
   assert.match(out, /VW short squeeze/);
   assert.ok(out.length <= 1900, `report card too long: ${out.length}`);
-  assert.ok(!out.includes("—"), "report card must not contain an em-dash");
+  assert.ok(!out.includes("\u2014"), "report card must not contain an em-dash");
 });
 
 test("formatReportCard handles an empty week without crashing", () => {
