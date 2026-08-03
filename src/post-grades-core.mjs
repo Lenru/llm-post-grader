@@ -32,6 +32,16 @@ const BANDS = [
   [60, "D"],
 ];
 
+// The bar a post must clear to be schedulable. Noah set this at 95 on
+// 2026-08-02 knowing his best post to date scored 93: it is a stretch target
+// that forces the closer and structure habits to change, not a description of
+// current work. Raising or lowering it is his call, not a tuning knob.
+export const PUBLISH_BAR = 95;
+
+export function meetsBar(overall) {
+  return overall >= PUBLISH_BAR;
+}
+
 /** Letter band for a 0-100 overall score. */
 export function bandFor(total) {
   for (const [floor, letter] of BANDS) {
@@ -147,10 +157,12 @@ export function formatReportCard({ summary, recent = [], prevSummary = null, ski
   // so bandFor(Math.round(summary.avgOverall)) reads it on the same 0-100
   // scale bandFor expects. No second rescale here.
   const trend = prevSummary ? ` (${signed(summary.avgOverall - prevSummary.avgOverall)} vs last period)` : "";
+  const clearingBar = recent.filter((row) => meetsBar(row.overall)).length;
   lines.push(
     "",
     `${summary.count} post${summary.count === 1 ? "" : "s"} graded, average ${summary.avgOverall}/100 = ${bandFor(Math.round(summary.avgOverall))}${trend}`,
     `Weakest dimension: ${summary.weakest.dim} at ${summary.weakest.avg}/5`,
+    `${clearingBar} of ${summary.count} clear the ${PUBLISH_BAR} bar`,
     "",
     // Per-dimension detail stays on the 0-5 rubric scale, labeled /5 so it is
     // never mistaken for a slice of the 0-100 overall.
