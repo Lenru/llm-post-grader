@@ -43,13 +43,14 @@ test("bandFor maps 0-100 scores to bands at the documented edges", () => {
   assert.equal(bandFor(0), "F");
 });
 
-test("PUBLISH_BAR is 95, so a silent change breaks this test", () => {
-  assert.equal(PUBLISH_BAR, 95);
+test("PUBLISH_BAR is 88, so a silent change breaks this test", () => {
+  assert.equal(PUBLISH_BAR, 88);
 });
 
-test("meetsBar applies the 95 bar as a strict >= cutoff", () => {
-  assert.equal(meetsBar(95), true);
-  assert.equal(meetsBar(94), false);
+test("meetsBar applies the 88 bar as a strict >= cutoff", () => {
+  assert.equal(meetsBar(88), true);
+  assert.equal(meetsBar(87), false);
+  assert.equal(meetsBar(90), true);
   assert.equal(meetsBar(100), true);
   assert.equal(meetsBar(0), false);
 });
@@ -131,14 +132,14 @@ test("formatReportCard names the weakest dimension and stays under the Discord l
   assert.ok(!out.includes("\u2014"), "report card must not contain an em-dash");
 });
 
-test("formatReportCard states how many of this run's graded posts clear the 95 bar", () => {
+test("formatReportCard states how many of this run's graded posts clear the 88 bar", () => {
   const summary = summarize([{ overall: 96, scores: full }, { overall: 60, scores: { hook: 4, voice: 2, clarity: 4, icp: 3, structure: 3, closer: 2 } }]);
   const recent = [
     { post_title: "Clears the bar", grade: "A", overall: 96, notes: "clean" },
     { post_title: "Misses the bar", grade: "D", overall: 60, notes: "weak closer" },
   ];
   const out = formatReportCard({ summary, recent, prevSummary: null, skipped: [] });
-  assert.match(out, /1 of 2 clear the 95 bar/);
+  assert.match(out, /1 of 2 clear the 88 bar/);
 });
 
 test("formatReportCard handles an empty week without crashing", () => {

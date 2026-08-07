@@ -33,10 +33,20 @@ const BANDS = [
 ];
 
 // The bar a post must clear to be schedulable. Noah set this at 95 on
-// 2026-08-02 knowing his best post to date scored 93: it is a stretch target
-// that forces the closer and structure habits to change, not a description of
-// current work. Raising or lowering it is his call, not a tuning knob.
-export const PUBLISH_BAR = 95;
+// 2026-08-02 when scores came from rubric v1, whose corpus averaged 88.5.
+// The rubric was then recalibrated to v2, which deliberately redefines a 5 as
+// "exceptional and rare" and a 4 as "the honest default for solid writing,"
+// shifting the whole distribution down roughly 8 points; v2's own text says a
+// good post lands "around 4s, which is roughly 80 out of 100." A 95 bar on
+// that scale demanded near-perfection where good work scores 80, and it froze
+// the queue: zero of 50 posts cleared it, best unpublished draft scored 80.
+// Noah rescaled the bar to 88 on 2026-08-07 to restore the original intent
+// (a stretch target, not a current-average description) on the v2 scale.
+// With six 0-5 dimensions the reachable totals near the bar are quantized:
+// 87 (26 raw) and 90 (27 raw), nothing between, so 88 functions as "27 of 30
+// raw," i.e. three 5s and three 4s. Raising or lowering it is Noah's call,
+// not a tuning knob.
+export const PUBLISH_BAR = 88;
 
 export function meetsBar(overall) {
   return overall >= PUBLISH_BAR;
