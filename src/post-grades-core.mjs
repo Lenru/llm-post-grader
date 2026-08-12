@@ -120,6 +120,32 @@ export function chunk(array, size) {
   return out;
 }
 
+/**
+ * Pick the first candidate path that actually exists, in order. Pure: the
+ * filesystem check is injected via `exists` (real callers pass fs.existsSync)
+ * so this selection logic is unit-testable without touching disk.
+ *
+ * Returns null when none of the candidates exist. The caller is responsible
+ * for failing loud in that case, naming every path it tried, rather than
+ * silently proceeding with a candidate that isn't there and failing later
+ * with a confusing downstream error (e.g. "rubric not found").
+ *
+ * This is the fix for the 2026-08-12 break: the clients content tree moved
+ * from Desktop/clients to "Desktop/Main Folder CLAUDE/clients" on 2026-08-08,
+ * and grade-sweep.mjs hardcoded the old path, so the weekly NoahOS-PostGrades
+ * scheduled task failed instead of grading for over a week: a hardcoded
+ * single location has no way to notice the ground moved under it. See
+ * grade-sweep.mjs for how the real candidate list is built (CLIENTS_ROOT env
+ * override, else the known probe locations) and where `exists` is wired to
+ * the real filesystem; this module stays I/O free on purpose.
+ */
+export function resolveClientsRoot(candidates, exists) {
+  for (const candidate of candidates) {
+    if (candidate && exists(candidate)) return candidate;
+  }
+  return null;
+}
+
 const round1 = (n) => Math.round(n * 10) / 10;
 
 /** Aggregate grade rows. Returns null when there is nothing to aggregate. */

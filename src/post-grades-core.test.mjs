@@ -18,6 +18,7 @@ import {
   summarize,
   formatReportCard,
   chunk,
+  resolveClientsRoot,
 } from "./post-grades-core.mjs";
 import { parsePostFile, postRefFor, insertBatchWithRetry } from "./grade-sweep.mjs";
 
@@ -333,6 +334,41 @@ test("insertBatchWithRetry: three thrown errors exhaust retries and surface the 
   assert.equal(result.ok, false);
   assert.equal(result.error, err3, "must carry the LAST error, not the first");
   assert.equal(sb.calls.length, 3, "must attempt exactly 3 times total, then give up");
+});
+
+// resolveClientsRoot guards the 2026-08-12 break: the content tree moved
+// from Desktop/clients to "Desktop/Main Folder CLAUDE/clients" and
+// grade-sweep.mjs had that old path hardcoded, so the weekly grading sweep
+// failed instead of grading for over a week. `exists` is injected rather
+// than calling fs.existsSync directly, so this is a plain function of an
+// array in and a Set-backed existence check, no real filesystem involved.
+function fakeExists(existingPaths) {
+  const set = new Set(existingPaths);
+  return (p) => set.has(p);
+}
+
+test("resolveClientsRoot returns the first candidate that exists", () => {
+  const exists = fakeExists(["/a", "/b", "/c"]);
+  assert.equal(resolveClientsRoot(["/a", "/b", "/c"], exists), "/a");
+});
+
+test("resolveClientsRoot skips missing candidates and picks the first that exists", () => {
+  const exists = fakeExists(["/main-folder-claude/clients"]);
+  assert.equal(
+    resolveClientsRoot(["/old/clients", "/main-folder-claude/clients"], exists),
+    "/main-folder-claude/clients",
+  );
+});
+
+test("resolveClientsRoot returns null when none of the candidates exist", () => {
+  const exists = fakeExists([]);
+  assert.equal(resolveClientsRoot(["/old/clients", "/main-folder-claude/clients"], exists), null);
+});
+
+test("resolveClientsRoot respects candidate order: an earlier existing path wins over a later one", () => {
+  const exists = fakeExists(["/first", "/second"]);
+  assert.equal(resolveClientsRoot(["/first", "/second"], exists), "/first");
+  assert.equal(resolveClientsRoot(["/second", "/first"], exists), "/second");
 });
 
 // M4: an unparseable --limit must never silently mean unlimited, which would
