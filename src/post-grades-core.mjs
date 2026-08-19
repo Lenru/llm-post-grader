@@ -32,24 +32,58 @@ const BANDS = [
   [60, "D"],
 ];
 
-// The bar a post must clear to be schedulable. Noah set this at 95 on
-// 2026-08-02 when scores came from rubric v1, whose corpus averaged 88.5.
-// The rubric was then recalibrated to v2, which deliberately redefines a 5 as
-// "exceptional and rare" and a 4 as "the honest default for solid writing,"
-// shifting the whole distribution down roughly 8 points; v2's own text says a
-// good post lands "around 4s, which is roughly 80 out of 100." A 95 bar on
-// that scale demanded near-perfection where good work scores 80, and it froze
-// the queue: zero of 50 posts cleared it, best unpublished draft scored 80.
-// Noah rescaled the bar to 88 on 2026-08-07 to restore the original intent
-// (a stretch target, not a current-average description) on the v2 scale.
-// With six 0-5 dimensions the reachable totals near the bar are quantized:
-// 87 (26 raw) and 90 (27 raw), nothing between, so 88 functions as "27 of 30
-// raw," i.e. three 5s and three 4s. Raising or lowering it is Noah's call,
-// not a tuning knob.
+// The bar a post must clear to be schedulable.
+//
+// noah-finance: 88. Noah set 95 on 2026-08-02 against rubric v1, whose corpus
+// averaged 88.5. v2 then redefined a 5 as "exceptional and rare" and a 4 as
+// "the honest default," shifting scores down roughly 8 points, and the
+// unchanged 95 froze the queue (zero of 50 cleared it). Rescaled to 88 on
+// 2026-08-07 to restore the stretch-target intent on the v2 scale. With six
+// 0-5 dimensions the reachable totals near the bar are quantized at 87 and 90,
+// so 88 functions as "27 of 30 raw," three 5s and three 4s.
+//
+// clinic: 69, and it is a floor rather than a quality gate. Measured 2026-08-16
+// against the client's own approved posts as ground truth (see
+// scripts/approved-corpus.mjs), with the median taken over three samples:
+//
+//   approved by the client, no edits   69 - 89   median 81
+//   drafts he has not approved   64 - 81   median 73
+//
+// Those overlap, so no threshold does the job people want a threshold to do.
+// A bar strict enough to block much (73+) also rejects two posts he signed off
+// verbatim. 69 is the floor of his accepted work: it blocks the two genuinely
+// weak drafts and never blocks anything he has said yes to. Treat 80+ as the
+// "send this one first" signal, which is what the ranking is actually good for.
+// push-queue.mjs also lets `client_status: approved` override the bar outright,
+// because a score should never veto a post its client already accepted.
+//
+// The two numbers are NOT comparable: noah-finance is six unweighted dimensions
+// at 0-5, clinic is seven weighted out of 100. One global bar across both was
+// applying a single threshold to two different scales.
+//
+// Re-derive clinic's floor as the approved corpus grows:
+//   node brain/grade-brand.mjs --brand=clinic --approved
+// Changing either number is Noah's call, not a tuning knob.
 export const PUBLISH_BAR = 88;
 
-export function meetsBar(overall) {
-  return overall >= PUBLISH_BAR;
+const BRAND_BAR = {
+  clinic: 69,
+};
+
+/** The bar for a brand, falling back to the global one. */
+export function barFor(brand) {
+  return BRAND_BAR[brand] ?? PUBLISH_BAR;
+}
+
+/**
+ * Does this score clear the bar?
+ *
+ * `brand` is optional so existing callers keep working, but omitting it applies
+ * noah-finance's threshold to whatever it is given, which is the bug this
+ * replaced. Pass the brand.
+ */
+export function meetsBar(overall, brand) {
+  return overall >= barFor(brand);
 }
 
 /** Letter band for a 0-100 overall score. */

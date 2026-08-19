@@ -9,6 +9,7 @@ import {
   RAW_TOTAL,
   SCORE_MAX,
   PUBLISH_BAR,
+  barFor,
   bandFor,
   meetsBar,
   normalizeScores,
@@ -46,6 +47,25 @@ test("bandFor maps 0-100 scores to bands at the documented edges", () => {
 
 test("PUBLISH_BAR is 88, so a silent change breaks this test", () => {
   assert.equal(PUBLISH_BAR, 88);
+});
+
+// Clinic's 69 was measured, not chosen: it is the floor of the posts the client
+// approved without an edit (69-89), graded against those same posts as ground
+// truth. His unapproved drafts score 64-81, so the sets overlap and anything
+// stricter rejects work he signed off verbatim. If this moves, it should be
+// because the approved corpus grew and the floor was re-derived, not because
+// a higher number felt better.
+test("clinic has its own bar at the floor of its client's approved work", () => {
+  assert.equal(barFor("clinic"), 69);
+  assert.equal(meetsBar(69, "clinic"), true);
+  assert.equal(meetsBar(68, "clinic"), false);
+  // The same score fails against noah-finance's threshold.
+  assert.equal(meetsBar(69, "noah-finance"), false);
+});
+
+test("an unlisted brand falls back to the global bar", () => {
+  assert.equal(barFor("community"), PUBLISH_BAR);
+  assert.equal(barFor(undefined), PUBLISH_BAR);
 });
 
 test("meetsBar applies the 88 bar as a strict >= cutoff", () => {
