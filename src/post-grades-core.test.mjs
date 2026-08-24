@@ -401,3 +401,23 @@ test("grade-sweep.mjs exits 1 with a clear message on an unparseable --limit", (
   assert.equal(res.status, 1);
   assert.match(res.stderr, /--limit/);
 });
+
+// The bar is per brand, and a card that omits the brand quietly measures every
+// brand against noah-finance's. Clinic's floor is 69 and its scores cluster in
+// the 70s, so the wrong bar turns a passing week into a failing one.
+test("the report card counts against the brand's own bar", () => {
+  const recent = [70, 75, 80].map((overall, i) => ({
+    post_title: `p${i}`,
+    grade: {},
+    overall,
+    notes: "",
+  }));
+  const summary = { count: 3, avgOverall: 75, byDimension: { hook: 4 }, weakest: { dim: "hook", avg: 4 } };
+
+  const clinic = formatReportCard({ summary, recent, brand: "clinic" });
+  assert.match(clinic, /3 of 3 clear the 69 bar/);
+
+  // No brand keeps the old behaviour for noah-finance, where 88 is correct.
+  const dflt = formatReportCard({ summary, recent });
+  assert.match(dflt, /0 of 3 clear the 88 bar/);
+});

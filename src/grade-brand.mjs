@@ -35,6 +35,15 @@ const arg = (name) => {
   return i !== -1 ? process.argv[i + 1] : null;
 };
 
+/**
+ * Video posts, which this rubric cannot score. `format` is freeform frontmatter
+ * that has drifted across brands, so the filename is checked too: every one of
+ * Clinic's video posts is named `clip-*` and every `clip-*` file carries
+ * `format: video`, verified 2026-08-21.
+ */
+const isVideo = (p) =>
+  String(p.format ?? "").toLowerCase().includes("video") || /clip-/.test(p.post_ref ?? "");
+
 const BRAND = arg("brand");
 const QUEUED = process.argv.includes("--queued");
 const DRY_RUN = process.argv.includes("--dry-run");
@@ -313,7 +322,7 @@ async function main() {
   );
 
   let q = sb.schema("hub").from("posts")
-    .select("post_ref,title,body,stage,client_status,grade_overall,grade_scores")
+    .select("post_ref,title,body,stage,client_status,grade_overall,grade_scores,format")
     .eq("brand", BRAND)
     .eq("visibility_effective", "client");
   // Ground truth comes from the same generated file the drafting skills read,
@@ -353,9 +362,32 @@ async function main() {
 
   // A post is never graded against itself: an exemplar in the prompt would
   // score itself perfectly and tell us nothing.
+  //
+  // Video is skipped outright, and this is not a temporary hack. The rubric has
+  // no video anchor: it says so itself ("There is no Visual dimension... Visual
+  // defects show up under Structure instead"), and Structure's own anchor is a
+  // nine-beat, ~280-word LinkedIn essay. Grading a 40-second clip against that
+  // measures the caption and never the post. Run over Clinic's queue on
+  // 2026-08-21 it scored text at 77 average, 84% clearing the bar, and video at
+  // 68, 47% clearing, with the biggest single loss on VOICE, of all dimensions,
+  // for posts that are the client speaking his own words. Sourcing lost too, on clips
+  // whose frontmatter cites a timestamped interview the grader cannot open.
+  //
+  // A wrong number is worse than no number here, because PUBLISH_BAR turns it
+  // into a gate. Video's gate is its compliance file plus the client's sign-off,
+  // both of which every clip already carries. To grade video properly, feed the
+  // grader the transcript segment that `source:` already points at, then delete
+  // this filter. Until then it stays off.
+  const skipped = [];
   const targets = (data ?? [])
-    .filter((p) => (p.body ?? "").trim().length > 40 && !exemplarRefs.has(p.post_ref))
+    .filter((p) => {
+      if (isVideo(p)) { skipped.push(p.post_ref); return false; }
+      return (p.body ?? "").trim().length > 40 && !exemplarRefs.has(p.post_ref);
+    })
     .slice(0, LIMIT);
+  if (skipped.length) {
+    console.log(`  skipped ${skipped.length} video post(s): this rubric has no video anchor`);
+  }
   console.log(`${BRAND}: ${targets.length} post(s) to grade (rubric ${version ?? "unversioned"})`);
   if (DRY_RUN) {
     for (const p of targets) console.log(`  would grade ${p.post_ref}`);

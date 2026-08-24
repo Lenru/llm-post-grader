@@ -214,7 +214,7 @@ const signed = (n) => (n > 0 ? `+${round1(n)}` : `${round1(n)}`);
  * The weekly Discord message. Built to a character budget: the header, summary
  * and trend are always kept, and the per-post list is truncated to fit.
  */
-export function formatReportCard({ summary, recent = [], prevSummary = null, skipped = [] }) {
+export function formatReportCard({ summary, recent = [], prevSummary = null, skipped = [], brand = null }) {
   const lines = ["**Post report card**"];
 
   if (!summary) {
@@ -227,12 +227,17 @@ export function formatReportCard({ summary, recent = [], prevSummary = null, ski
   // so bandFor(Math.round(summary.avgOverall)) reads it on the same 0-100
   // scale bandFor expects. No second rescale here.
   const trend = prevSummary ? ` (${signed(summary.avgOverall - prevSummary.avgOverall)} vs last period)` : "";
-  const clearingBar = recent.filter((row) => meetsBar(row.overall)).length;
+  // WITH the brand. Without it every card measures against noah-finance's 88,
+  // so a clinic card would read "3 of 19 clear the bar" where the honest answer
+  // against clinic's derived floor is 16 of 19. Latent until the first non
+  // noah-finance caller, which is exactly when nobody would think to check.
+  const bar = barFor(brand);
+  const clearingBar = recent.filter((row) => meetsBar(row.overall, brand)).length;
   lines.push(
     "",
     `${summary.count} post${summary.count === 1 ? "" : "s"} graded, average ${summary.avgOverall}/100 = ${bandFor(Math.round(summary.avgOverall))}${trend}`,
     `Weakest dimension: ${summary.weakest.dim} at ${summary.weakest.avg}/5`,
-    `${clearingBar} of ${summary.count} clear the ${PUBLISH_BAR} bar`,
+    `${clearingBar} of ${summary.count} clear the ${bar} bar`,
     "",
     // Per-dimension detail stays on the 0-5 rubric scale, labeled /5 so it is
     // never mistaken for a slice of the 0-100 overall.
