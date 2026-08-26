@@ -322,7 +322,7 @@ async function main() {
   );
 
   let q = sb.schema("hub").from("posts")
-    .select("post_ref,title,body,stage,client_status,grade_overall,grade_scores,format")
+    .select("post_ref,title,body,stage,client_status,grade_overall,grade_scores,format,platform")
     .eq("brand", BRAND)
     .eq("visibility_effective", "client");
   // Ground truth comes from the same generated file the drafting skills read,
@@ -378,15 +378,39 @@ async function main() {
   // both of which every clip already carries. To grade video properly, feed the
   // grader the transcript segment that `source:` already points at, then delete
   // this filter. Until then it stays off.
+  // Threads is skipped for exactly the same reason, added 2026-08-25 on Noah's
+  // call once the first full sweep made it visible. Grading 66 Clinic posts gave
+  // Instagram 77.8, LinkedIn 77.2 and Facebook 76.5, with no F anywhere, and
+  // Threads 60.3 with 20 of 27 under the bar and ELEVEN F grades. Every F in the
+  // corpus was a Threads post.
+  //
+  // That is the same failure as video, not a different one. Structure's anchor
+  // is a nine-beat ~280-word LinkedIn essay, and a Threads post is a few lines
+  // by design. The rubric measures its length and reports it as quality. Take
+  // Threads out and the remaining 39 posts average 77.4 with four under the bar
+  // and no F, which is a corpus the numbers actually describe.
+  // Two sources, the same belt-and-braces isVideo uses: the column, and the
+  // filename convention every threads draft follows. `platform` had to be added
+  // to the select above for the first half to be anything but undefined, which
+  // is how a skip like this silently never fires.
+  const isThreads = (p) =>
+    String(p.platform ?? "").toLowerCase() === "threads" ||
+    /(^|\/)threads_/.test(p.post_ref ?? "");
+
   const skipped = [];
+  const skippedThreads = [];
   const targets = (data ?? [])
     .filter((p) => {
       if (isVideo(p)) { skipped.push(p.post_ref); return false; }
+      if (isThreads(p)) { skippedThreads.push(p.post_ref); return false; }
       return (p.body ?? "").trim().length > 40 && !exemplarRefs.has(p.post_ref);
     })
     .slice(0, LIMIT);
   if (skipped.length) {
     console.log(`  skipped ${skipped.length} video post(s): this rubric has no video anchor`);
+  }
+  if (skippedThreads.length) {
+    console.log(`  skipped ${skippedThreads.length} threads post(s): this rubric is LinkedIn-shaped`);
   }
   console.log(`${BRAND}: ${targets.length} post(s) to grade (rubric ${version ?? "unversioned"})`);
   if (DRY_RUN) {
