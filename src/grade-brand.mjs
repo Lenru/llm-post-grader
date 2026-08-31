@@ -48,6 +48,10 @@ const BRAND = arg("brand");
 const QUEUED = process.argv.includes("--queued");
 const DRY_RUN = process.argv.includes("--dry-run");
 const LIMIT = Number(arg("limit")) || Infinity;
+/** Grade ONE post by a substring of its post_ref. For the "can this go out
+ *  today" question, where grading the other thirty is a ten minute wait and
+ *  thirty model calls nobody asked for. */
+const ONLY_REF = arg("ref");
 // Re-grade posts that ALREADY have a score and print the delta, writing nothing.
 // The first version of this script was confidently wrong; calibrating against
 // grades produced with full context is how that gets caught next time.
@@ -403,6 +407,7 @@ async function main() {
     .filter((p) => {
       if (isVideo(p)) { skipped.push(p.post_ref); return false; }
       if (isThreads(p)) { skippedThreads.push(p.post_ref); return false; }
+      if (ONLY_REF && !(p.post_ref ?? "").includes(ONLY_REF)) return false;
       return (p.body ?? "").trim().length > 40 && !exemplarRefs.has(p.post_ref);
     })
     .slice(0, LIMIT);
