@@ -134,15 +134,42 @@ function loadContext() {
   return parts.join("\n\n");
 }
 
-function loadRubric() {
-  const fp = join(CLIENTS_ROOT, BRAND, "brand", "post-rubric.md");
+/**
+ * A brand can run more than one surface, and the surfaces are graded to
+ * different standards. Community is the case: `post-rubric.md` scores the Club
+ * accounts over seven weighted dimensions INCLUDING Visual worth 20, and
+ * `post-rubric-founder.md` scores his personal profile over six with no Visual
+ * dimension at all, because that surface is text only by spec.
+ *
+ * Loading the Club rubric for a post on the founder's profile is not a mild
+ * mismatch, it is arithmetic: the post forfeits Visual's 20 points before a
+ * word is read, so 80 is its ceiling and the bar is 88. Nothing he writes can
+ * pass. That is the same shape as the bar that froze Clinic's queue at zero of
+ * fifty, and it would have looked like the writing failing.
+ *
+ * Surface is not on the hub row and is not in the post_ref path, so the split
+ * is the filename convention every draft already follows, which is the same
+ * belt-and-braces the Threads skip below relies on: club drafts are `club_*`,
+ * his are not.
+ */
+const RUBRIC_CACHE = new Map();
+function loadRubric(ref = "") {
+  const isClub = /(?:^|\/)club_/.test(ref);
+  const founder = join(CLIENTS_ROOT, BRAND, "brand", "post-rubric-founder.md");
+  const fp = !isClub && existsSync(founder)
+    ? founder
+    : join(CLIENTS_ROOT, BRAND, "brand", "post-rubric.md");
+
+  if (RUBRIC_CACHE.has(fp)) return RUBRIC_CACHE.get(fp);
   if (!existsSync(fp)) {
     console.error(`No rubric at ${fp}. Grading without one would invent a standard.`);
     process.exit(1);
   }
   const raw = readFileSync(fp, "utf8");
   const version = raw.match(/^rubric_version:\s*(\S+)/m)?.[1] ?? null;
-  return { text: raw, version };
+  const loaded = { text: raw, version, path: fp };
+  RUBRIC_CACHE.set(fp, loaded);
+  return loaded;
 }
 
 /**
@@ -315,7 +342,6 @@ function gradeOne(args) {
 }
 
 async function main() {
-  const { text: rubric, version } = loadRubric();
   const context = loadContext();
 
   const { createClient } = await import("@supabase/supabase-js");
@@ -417,7 +443,7 @@ async function main() {
   if (skippedThreads.length) {
     console.log(`  skipped ${skippedThreads.length} threads post(s): this rubric is LinkedIn-shaped`);
   }
-  console.log(`${BRAND}: ${targets.length} post(s) to grade (rubric ${version ?? "unversioned"})`);
+  console.log(`${BRAND}: ${targets.length} post(s) to grade`);
   if (DRY_RUN) {
     for (const p of targets) console.log(`  would grade ${p.post_ref}`);
     return;
@@ -430,6 +456,7 @@ async function main() {
   if (APPROVED_ONLY && !REGRADE) {
     const scored = [];
     for (const p of targets) {
+      const { text: rubric, version } = loadRubric(p.post_ref);
       const g = gradeOne({ rubric, context, exemplars, body: p.body, ref: p.post_ref });
       if (!g) continue;
       scored.push({ ref: p.post_ref, ...g });
@@ -466,6 +493,7 @@ ${scored.length} post(s) the client approved: floor ${floor}, median ${median}, 
   if (COMPARE) {
     const deltas = [];
     for (const p of targets) {
+      const { text: rubric, version } = loadRubric(p.post_ref);
       const g = gradeOne({ rubric, context, exemplars, body: p.body, ref: p.post_ref });
       if (!g) continue;
       const d = g.overall - p.grade_overall;
@@ -484,6 +512,7 @@ mean drift ${mean.toFixed(1)} points, largest single gap ${worst}`);
 
   let done = 0, failed = 0;
   for (const p of targets) {
+    const { text: rubric, version } = loadRubric(p.post_ref);
     const g = gradeOne({ rubric, context, exemplars, body: p.body, ref: p.post_ref });
     if (!g) { failed += 1; continue; }
 
