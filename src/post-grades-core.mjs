@@ -54,20 +54,45 @@ const BANDS = [
 // verbatim. 69 is the floor of his accepted work: it blocks the two genuinely
 // weak drafts and never blocks anything he has said yes to. Treat 80+ as the
 // "send this one first" signal, which is what the ranking is actually good for.
-// push-queue.mjs also lets `client_status: approved` override the bar outright,
-// because a score should never veto a post its client already accepted.
+// The Postiz pusher used to let `client_status: approved` override the bar
+// outright, on the principle that a score should never veto a post its client has
+// already accepted. That pusher is deleted (2026-09-16, Postiz retired), so THE
+// OVERRIDE NO LONGER EXISTS ANYWHERE. If a client-approved post ever gets blocked
+// by a score again, this is the behaviour to rebuild, in the Metricool path.
 //
 // The two numbers are NOT comparable: noah-finance is six unweighted dimensions
 // at 0-5, clinic is seven weighted out of 100. One global bar across both was
 // applying a single threshold to two different scales.
 //
-// Re-derive clinic's floor as the approved corpus grows:
+// Re-derive a brand's floor as its approved corpus grows:
 //   node brain/grade-brand.mjs --brand=clinic --approved
-// Changing either number is Noah's call, not a tuning knob.
+// Changing any of these numbers is Noah's call, not a tuning knob.
 export const PUBLISH_BAR = 88;
 
 const BRAND_BAR = {
   clinic: 69,
+  // community Club, derived 2026-09-14 the same way clinic's was, and signed off by
+  // Noah. Community had no entry, so it silently inherited noah-finance's 88 while
+  // its own rubric v5 states that a good clean post "should land... roughly 80
+  // out of 100 overall". No community post has ever scored above 74. Nothing could
+  // ever schedule, which is why the Club queue sat empty with seven
+  // compliance-passed drafts on disk.
+  //
+  // The v5 grades on 2026-09-10, highest first: Before they ever drive 74
+  // (published, noah_verdict pass), For businesses 73 (compliance passed),
+  // What's on this weekend 70 (compliance passed), Why we built this 60,
+  // What is Community 48. 70 is the TIGHTEST threshold that passes all three
+  // pieces Noah has approved and blocks both July decks, including the one
+  // whose photograph fails the rubric's own place test on four named counts.
+  // It lands one point off clinic's independently derived 69.
+  //
+  // Why 88 was unreachable rather than merely hard: the rubric caps ICP at 8
+  // of 15 whenever there is no written permission to name a real cause, and
+  // only a real photograph reaches the top Visual band. Community has neither, so
+  // roughly 12 points are gone before a word is written. Permission to name
+  // two or three causes, plus one real photo shoot, is what raises the ceiling
+  // and is the trigger to re-derive this.
+  community: 70,
 };
 
 /** The bar for a brand, falling back to the global one. */
