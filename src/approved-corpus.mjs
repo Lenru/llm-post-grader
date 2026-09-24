@@ -25,6 +25,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveClientsRoot } from "../brain/post-grades-core.mjs";
+import { cleanEnv } from "./lib/env.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 try { process.loadEnvFile(join(ROOT, ".env.local")); } catch { /* exported */ }
@@ -94,8 +95,8 @@ export function loadApprovedExamples(clientsRoot, brand) {
 }
 
 async function main() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const url = cleanEnv(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  const key = cleanEnv(process.env.SUPABASE_SERVICE_ROLE_KEY);
   if (!url || !key) {
     console.error("NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required.");
     process.exit(1);
@@ -106,14 +107,18 @@ async function main() {
   let q = sb
     .schema("hub")
     .from("posts")
-    .select("brand,post_ref,title,body,platform,pillar")
+    .select("brand,post_ref,title,body,platform,pillar,client_reviewed_at")
     .eq("client_status", "approved")
     .order("brand")
     .order("post_ref");
   if (ONLY_BRAND) q = q.eq("brand", ONLY_BRAND);
 
-  const { data, error } = await q;
+  const { data: all, error } = await q;
   if (error) { console.error(error.message); process.exit(1); }
+  // From 2026-09-09 Noah is Clinic's approver, so an approval after that means
+  // "cleared to post", not the client signing off on the voice. Only his count here.
+  // ponytail: a date cutoff, add an approved_by column if the client approves again.
+  const data = all.filter((p) => p.brand !== "clinic" || !p.client_reviewed_at || p.client_reviewed_at < "2026-09-09");
 
   const byBrand = new Map();
   for (const p of data ?? []) {
