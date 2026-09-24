@@ -95,8 +95,8 @@ export function loadApprovedExamples(clientsRoot, brand) {
 }
 
 async function main() {
-  const url = cleanEnv(process.env.NEXT_PUBLIC_SUPABASE_URL);
-  const key = cleanEnv(process.env.SUPABASE_SERVICE_ROLE_KEY);
+  const url = cleanEnv(process.env.NEXT_PUBLIC_SUPABASE_URL, "NEXT_PUBLIC_SUPABASE_URL");
+  const key = cleanEnv(process.env.SUPABASE_SERVICE_ROLE_KEY, "SUPABASE_SERVICE_ROLE_KEY");
   if (!url || !key) {
     console.error("NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required.");
     process.exit(1);
