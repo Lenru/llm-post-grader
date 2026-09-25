@@ -63,9 +63,35 @@ test("clinic has its own bar at the floor of its client's approved work", () => 
   assert.equal(meetsBar(69, "noah-finance"), false);
 });
 
-test("an unlisted brand falls back to the global bar", () => {
-  assert.equal(barFor("community"), PUBLISH_BAR);
+// community used to be the example of the fallback, and that was the bug rather
+// than the behaviour: inheriting 88 meant nothing it wrote could ever schedule,
+// because its own rubric v5 targets roughly 80 and no community post has scored
+// above 74. Derived to 70 on 2026-09-14, the tightest threshold passing all
+// three pieces Noah has approved (74, 73, 70) while blocking both July decks
+// (60, 48).
+test("community has its own bar at the floor of the work Noah has approved", () => {
+  assert.equal(barFor("community"), 70);
+  assert.equal(meetsBar(70, "community"), true);
+  assert.equal(meetsBar(69, "community"), false);
+  // The July deck the Visual dimension was added to catch stays blocked.
+  assert.equal(meetsBar(48, "community"), false);
+  // And the same score still fails against noah-finance's threshold.
+  assert.equal(meetsBar(74, "noah-finance"), false);
+});
+
+test("a brand with no entry still falls back to the global bar", () => {
+  assert.equal(barFor("some-brand-with-no-rubric"), PUBLISH_BAR);
   assert.equal(barFor(undefined), PUBLISH_BAR);
+});
+
+// watsons-media used to be the example of a brand falling back to 88. Noah set it
+// to 80 on 2026-09-23 for the reason recorded in post-grades-core.mjs: 88 was never
+// derived for it, and its own rubric says good work lands around 80. Asserted here
+// so lowering it again is a deliberate act rather than a silent one.
+test("watsons-media has its own bar of 80, not the global fallback", () => {
+  assert.equal(barFor("watsons-media"), 80);
+  assert.equal(meetsBar(84, "watsons-media"), true);
+  assert.equal(meetsBar(79, "watsons-media"), false);
 });
 
 test("meetsBar applies the 88 bar as a strict >= cutoff", () => {

@@ -93,6 +93,23 @@ const BRAND_BAR = {
   // two or three causes, plus one real photo shoot, is what raises the ceiling
   // and is the trigger to re-derive this.
   community: 70,
+  // watsons-media, set by Noah 2026-09-23: "88 doesn't need to be this strict bar,
+  // that's what we shoot for, because if everything has to be 88 then it's not going
+  // to create good content." The 88 was never derived for this brand, it was the
+  // global fallback, which is the same defect that froze community's queue.
+  //
+  // Two things make 80 the defensible number rather than a guess. Its own rubric v1
+  // says a good post breaking no rules "should land... roughly 80 out of 100 overall,
+  // not in the high 90s", so a gate at 88 sat above the centre the rubric was designed
+  // around. And its internal notes say: "No anchor set yet: this rubric has never been
+  // run... Before it gates anything, grade the posts Noah has already published... A
+  // grader that fails work he chose to publish is wrong about the grader."
+  //
+  // PROVISIONAL. A real derivation needs a corpus and there is one graded post
+  // (the AI-visibility claim post, 84, which Noah read and approved). Re-derive the
+  // way community's was once several Watson's Media posts have shipped and been graded.
+  // 88 remains the target to write toward; this is the floor that blocks bad work.
+  "watsons-media": 80,
 };
 
 /** The bar for a brand, falling back to the global one. */
