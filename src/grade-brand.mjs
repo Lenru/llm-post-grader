@@ -250,10 +250,10 @@ function gradeOnce({ rubric, context, exemplars, body, ref }) {
 
   // Prompt on stdin, not argv: the rubric is long, and its own "<0-5>"
   // placeholders get treated as redirection operators by cmd.exe when passed
-  // as an argv string. `--allowedTools ""` denies tool access for the grading
+  // as an argv string. `--tools "" --strict-mcp-config` denies tool access for the grading
   // call, so the grader cannot read files or run Bash mid-grade. Both learned
-  // the hard way in grade-sweep.mjs; see its notes.
-  const res = spawnSync("claude", ["-p", "--allowedTools", ""], {
+  // the hard way in grade-sweep.mjs; see its notes. (`--allowedTools ""` turns NOTHING off: proven 2026-10-20.)
+  const res = spawnSync("claude", ["-p", "--tools", "", "--strict-mcp-config"], {
     input: prompt,
     encoding: "utf8",
     timeout: 180000,
