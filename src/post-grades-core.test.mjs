@@ -445,9 +445,16 @@ test("the report card counts against the brand's own bar", () => {
   const clinic = formatReportCard({ summary, recent, brand: "clinic" });
   assert.match(clinic, /3 of 3 clear the 69 bar/);
 
-  // No brand keeps the old behaviour for noah-finance, where 88 is correct.
+  // No brand falls back to the global 88.
   const dflt = formatReportCard({ summary, recent });
   assert.match(dflt, /0 of 3 clear the 88 bar/);
+});
+
+// Noah, 2026-10-26: 80-87 is fine for his own posts; 88 was turning work away on noise.
+test("noah-finance has its own 80 floor", () => {
+  assert.equal(barFor("noah-finance"), 80);
+  assert.equal(meetsBar(80, "noah-finance"), true);
+  assert.equal(meetsBar(79, "noah-finance"), false);
 });
 
 // grade-brand.mjs shows the grader a post's media. Images pass through, each

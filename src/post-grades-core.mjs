@@ -110,6 +110,12 @@ const BRAND_BAR = {
   // way community's was once several Watson's Media posts have shipped and been graded.
   // 88 remains the target to write toward; this is the floor that blocks bad work.
   "watsons-media": 80,
+  // noah-finance, set by Noah 2026-10-26 after the overnight batch: "posts at 80-87
+  // are okay, we shouldn't be only allowing a certain number because it's an
+  // arbitrary grade really." The grader moved about 3 points between runs of the
+  // same text that day, so 88 was turning away posts on noise. Same floor as
+  // watsons-media; 88 stays the target to write toward.
+  "noah-finance": 80,
 };
 
 /** The bar for a brand, falling back to the global one. */
