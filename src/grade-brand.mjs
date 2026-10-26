@@ -19,10 +19,11 @@
 // graded post shows its score in the hub on the next `hub-sync`.
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { resolveClientsRoot } from "./post-grades-core.mjs";
+import { resolveClientsRoot, pickMedia } from "./post-grades-core.mjs";
 import { loadApprovedExamples, FILENAME } from "../scripts/approved-corpus.mjs";
 
 // Every `claude -p` this script spawns must run on Noah's SUBSCRIPTION, not on the
@@ -182,13 +183,48 @@ function loadRubric(ref = "") {
 }
 
 /**
+ * A post's media as base64 image blocks for the grader, loaded once per post
+ * (not per sample). Images are fetched; each .mp4 gives its final frame via
+ * ffmpeg reading the public URL directly. `expected` is how many there should
+ * be, so a failed load shows up as a partial grade instead of a blind guess.
+ */
+async function loadMedia(urls) {
+  const dir = mkdtempSync(join(tmpdir(), "grade-media-"));
+  const picked = pickMedia(urls, dir);
+  const images = [];
+  try {
+    for (const m of picked) {
+      try {
+        let buf;
+        if (m.kind === "video") {
+          const ff = spawnSync("ffmpeg", ["-v", "error", "-y", "-sseof", "-0.2", "-i", m.url, "-frames:v", "1", m.still], { timeout: 60000 });
+          if (ff.status !== 0 || !existsSync(m.still)) throw new Error(String(ff.stderr || ff.error || "ffmpeg failed").trim());
+          buf = readFileSync(m.still);
+        } else {
+          const r = await fetch(m.url);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          buf = Buffer.from(await r.arrayBuffer());
+        }
+        images.push({ type: "image", source: { type: "base64", media_type: m.mediaType, data: buf.toString("base64") } });
+      } catch (e) {
+        console.warn(`  media not loaded: ${m.url} (${e.message.slice(0, 120)})`);
+      }
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  return { images, expected: picked.length };
+}
+
+/**
  * One post, one model call. Returns a validated record or null.
  *
  * The envelope is checked, not the dimension list: each brand's rubric names
  * its own dimensions and its own scale, so asserting a fixed set here would
  * just reimpose noah-finance's shape on everyone.
  */
-function gradeOnce({ rubric, context, exemplars, body, ref }) {
+function gradeOnce({ rubric, context, exemplars, body, ref, images = [], expected = 0 }) {
+  const partial = expected > images.length;
   const prompt = [
     "You are grading a social media post against a fixed rubric.",
     "Apply the rubric literally, using ITS dimensions, ITS weights and ITS scale.",
@@ -249,6 +285,21 @@ function gradeOnce({ rubric, context, exemplars, body, ref }) {
     body,
     "=== END POST ===",
     "",
+    ...(expected
+      ? [
+          `MEDIA: this post carries ${expected} media file(s). ${images.length} are attached as images,`,
+          "in post order (a video slide is shown as its final frame). Score `visual` from",
+          "the attached images, every one of them, not from the caption.",
+          ...(partial
+            ? [
+                `${expected - images.length} could not be loaded. Score \`visual\` only on what is`,
+                "attached, do not guess at the rest, and start notes with",
+                `"PARTIAL: visual from ${images.length} of ${expected} media."`,
+              ]
+            : []),
+          "",
+        ]
+      : []),
     "Reply with ONLY a JSON object, no prose, no code fence:",
     '{"scores":{"<each rubric dimension key>":<number awarded>},',
     ' "max_scores":{"<same keys>":<maximum that dimension can score per the rubric>},',
@@ -262,19 +313,34 @@ function gradeOnce({ rubric, context, exemplars, body, ref }) {
   // as an argv string. `--tools "" --strict-mcp-config` denies tool access for the grading
   // call, so the grader cannot read files or run Bash mid-grade. Both learned
   // the hard way in grade-sweep.mjs; see its notes. (`--allowedTools ""` turns NOTHING off: proven 2026-10-20.)
-  const res = spawnSync("claude", ["-p", "--tools", "", "--strict-mcp-config"], {
-    input: prompt,
-    encoding: "utf8",
-    timeout: 180000,
-    maxBuffer: 10 * 1024 * 1024,
-  });
+  // With media, images go in as base64 content blocks over stream-json input, so
+  // tools stay fully off: no Read tool, no file paths. Proven 2026-10-26.
+  // stream-json input requires stream-json output; the reply is the `result` event.
+  const withImages = images.length > 0;
+  const res = spawnSync(
+    "claude",
+    ["-p", "--tools", "", "--strict-mcp-config",
+      ...(withImages ? ["--input-format", "stream-json", "--output-format", "stream-json", "--verbose"] : [])],
+    {
+      input: withImages
+        ? JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text: prompt }, ...images] } }) + "\n"
+        : prompt,
+      encoding: "utf8",
+      timeout: 180000,
+      maxBuffer: 50 * 1024 * 1024,
+    },
+  );
 
   if (res.status !== 0 || !res.stdout) {
     console.error(`  ${ref}: grade failed (${res.stderr?.trim() || `exit ${res.status}`})`);
     return null;
   }
 
-  const match = res.stdout.match(/\{[\s\S]*\}/);
+  const text = withImages
+    ? res.stdout.split("\n").map((l) => { try { return JSON.parse(l); } catch { return null; } })
+        .find((e) => e?.type === "result")?.result ?? ""
+    : res.stdout;
+  const match = text.match(/\{[\s\S]*\}/);
   if (!match) { console.error(`  ${ref}: no JSON in output`); return null; }
 
   let parsed;
@@ -313,7 +379,9 @@ function gradeOnce({ rubric, context, exemplars, body, ref }) {
     // Recomputed rather than trusted: the band must follow from the number, or
     // the report card and the publish gate can disagree about the same post.
     grade: bandFor(overall),
-    notes: String(parsed.notes ?? "").slice(0, 1000),
+    // Enforced here too, so a partial grade is marked even if the model forgets.
+    notes: ((partial && !/^PARTIAL/.test(String(parsed.notes ?? ""))
+      ? `PARTIAL: visual from ${images.length} of ${expected} media. ` : "") + String(parsed.notes ?? "")).slice(0, 1000),
   };
 }
 
@@ -364,7 +432,7 @@ async function main() {
   );
 
   let q = sb.schema("hub").from("posts")
-    .select("post_ref,title,body,stage,client_status,grade_overall,grade_scores,format,platform")
+    .select("post_ref,title,body,stage,client_status,grade_overall,grade_scores,format,platform,media")
     .eq("brand", BRAND)
     .eq("visibility_effective", "client");
   // Ground truth comes from the same generated file the drafting skills read,
@@ -469,7 +537,7 @@ async function main() {
     const scored = [];
     for (const p of targets) {
       const { text: rubric, version } = loadRubric(p.post_ref);
-      const g = gradeOne({ rubric, context, exemplars, body: p.body, ref: p.post_ref });
+      const g = gradeOne({ rubric, context, exemplars, body: p.body, ref: p.post_ref, ...(await loadMedia(p.media)) });
       if (!g) continue;
       scored.push({ ref: p.post_ref, ...g });
       const drift = g.spread ? `  ±${g.spread}` : "";
@@ -506,7 +574,7 @@ ${scored.length} post(s) the client approved: floor ${floor}, median ${median}, 
     const deltas = [];
     for (const p of targets) {
       const { text: rubric, version } = loadRubric(p.post_ref);
-      const g = gradeOne({ rubric, context, exemplars, body: p.body, ref: p.post_ref });
+      const g = gradeOne({ rubric, context, exemplars, body: p.body, ref: p.post_ref, ...(await loadMedia(p.media)) });
       if (!g) continue;
       const d = g.overall - p.grade_overall;
       deltas.push(d);
@@ -525,7 +593,7 @@ mean drift ${mean.toFixed(1)} points, largest single gap ${worst}`);
   let done = 0, failed = 0;
   for (const p of targets) {
     const { text: rubric, version } = loadRubric(p.post_ref);
-    const g = gradeOne({ rubric, context, exemplars, body: p.body, ref: p.post_ref });
+    const g = gradeOne({ rubric, context, exemplars, body: p.body, ref: p.post_ref, ...(await loadMedia(p.media)) });
     if (!g) { failed += 1; continue; }
 
     // stage 'draft' in the hub maps to ops.post_grades' 'draft'; anything live

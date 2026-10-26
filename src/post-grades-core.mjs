@@ -222,6 +222,27 @@ export function resolveClientsRoot(candidates, exists) {
   return null;
 }
 
+/** Most images one grade call carries: a full carousel, and a bounded prompt. */
+export const MEDIA_CAP = 8;
+const IMAGE_TYPES = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif" };
+
+/**
+ * hub.posts.media -> what grade-brand.mjs shows the grader, in post order.
+ * Images go as they are; each .mp4 becomes one still (its final frame, where an
+ * animated card settles). Anything else is dropped. `still` is the png the
+ * caller extracts with ffmpeg, so the path rule lives here and is tested.
+ */
+export function pickMedia(urls, stillDir, cap = MEDIA_CAP) {
+  const out = [];
+  for (const url of Array.isArray(urls) ? urls : []) {
+    const ext = String(url).split(/[?#]/)[0].split(".").pop().toLowerCase();
+    if (IMAGE_TYPES[ext]) out.push({ url, kind: "image", mediaType: IMAGE_TYPES[ext] });
+    else if (ext === "mp4") out.push({ url, kind: "video", mediaType: "image/png", still: `${stillDir}/still_${out.length}.png` });
+    if (out.length >= cap) break;
+  }
+  return out;
+}
+
 const round1 = (n) => Math.round(n * 10) / 10;
 
 /** Aggregate grade rows. Returns null when there is nothing to aggregate. */

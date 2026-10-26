@@ -20,6 +20,8 @@ import {
   formatReportCard,
   chunk,
   resolveClientsRoot,
+  pickMedia,
+  MEDIA_CAP,
 } from "./post-grades-core.mjs";
 import { parsePostFile, postRefFor, insertBatchWithRetry } from "./grade-sweep.mjs";
 
@@ -446,4 +448,25 @@ test("the report card counts against the brand's own bar", () => {
   // No brand keeps the old behaviour for noah-finance, where 88 is correct.
   const dflt = formatReportCard({ summary, recent });
   assert.match(dflt, /0 of 3 clear the 88 bar/);
+});
+
+// grade-brand.mjs shows the grader a post's media. Images pass through, each
+// mp4 becomes one still path, other files drop, and the list is capped.
+test("pickMedia keeps images, maps mp4 to a still path, drops the rest", () => {
+  const got = pickMedia(
+    ["https://x/a.PNG", "https://x/b.mp4?v=1", "https://x/c.pdf", "https://x/d.jpg"],
+    "/tmp/g",
+  );
+  assert.deepEqual(got, [
+    { url: "https://x/a.PNG", kind: "image", mediaType: "image/png" },
+    { url: "https://x/b.mp4?v=1", kind: "video", mediaType: "image/png", still: "/tmp/g/still_1.png" },
+    { url: "https://x/d.jpg", kind: "image", mediaType: "image/jpeg" },
+  ]);
+});
+
+test("pickMedia caps the list and tolerates no media", () => {
+  const many = Array.from({ length: 12 }, (_, i) => `https://x/${i}.png`);
+  assert.equal(pickMedia(many, "/t").length, MEDIA_CAP);
+  assert.deepEqual(pickMedia(null, "/t"), []);
+  assert.deepEqual(pickMedia([], "/t"), []);
 });
