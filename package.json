@@ -1,0 +1,13 @@
+{
+  "name": "llm-post-grader",
+  "version": "1.0.0",
+  "description": "Grade social posts against a brand's own rubric with Claude, calibrated against posts the client already approved.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=20.12" },
+  "scripts": {
+    "test": "node --test",
+    "grade": "node src/grade-brand.mjs --brand=example/northside-physio",
+    "calibrate": "node src/grade-brand.mjs --brand=example/northside-physio --approved --exemplars=2"
+  }
+}

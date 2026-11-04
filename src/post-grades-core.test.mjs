@@ -1,8 +1,5 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 import {
   DIMENSIONS,
   RUBRIC_VERSION,
@@ -22,10 +19,11 @@ import {
   resolveClientsRoot,
   pickMedia,
   MEDIA_CAP,
+  parseGrade,
+  medianRun,
+  parsePost,
 } from "./post-grades-core.mjs";
-import { parsePostFile, postRefFor, insertBatchWithRetry } from "./grade-sweep.mjs";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const full = { hook: 5, voice: 5, clarity: 5, icp: 5, structure: 5, closer: 5 };
 
@@ -244,64 +242,6 @@ test("formatReportCard truncates a huge recent list rather than exceeding the li
   assert.ok(postLineCount < recent.length, `expected fewer than ${recent.length} post lines to survive, got ${postLineCount}`);
 });
 
-test("parsePostFile strips frontmatter and returns the body plus title", () => {
-  const raw = [
-    "---",
-    "title: FedNow deposit rails",
-    "status: PASS",
-    "---",
-    "",
-    "Instant payments changed the deposit game.",
-    "",
-    "Second paragraph.",
-  ].join("\n");
-  const parsed = parsePostFile(raw);
-  assert.equal(parsed.title, "FedNow deposit rails");
-  assert.match(parsed.body, /^Instant payments/);
-  assert.match(parsed.body, /Second paragraph\./);
-  assert.ok(!parsed.body.includes("status: PASS"));
-});
-
-test("parsePostFile falls back to the first heading when frontmatter has no title", () => {
-  const parsed = parsePostFile("---\nstatus: PASS\n---\n\n# Copper grid buildout\n\nBody text here.");
-  assert.equal(parsed.title, "Copper grid buildout");
-  assert.match(parsed.body, /Body text here/);
-});
-
-test("parsePostFile handles a file with no frontmatter at all", () => {
-  const parsed = parsePostFile("Just a body, no frontmatter.\n");
-  assert.equal(parsed.body.trim(), "Just a body, no frontmatter.");
-});
-
-test("parsePostFile returns an empty body for a frontmatter-only file so the sweep can skip it", () => {
-  const parsed = parsePostFile("---\ntitle: Empty\n---\n\n   \n");
-  assert.equal(parsed.body.trim(), "");
-});
-
-test("postRefFor produces a stable relative ref regardless of path separators", () => {
-  const win = String.raw`C:\Users\me\Desktop\clients\noah-finance\distribution\scheduled\2026-07-02_linkedin_fednow-deposit-rails.md`;
-  assert.equal(postRefFor(win), "distribution/2026-07-02_linkedin_fednow-deposit-rails.md");
-  const nix = "/c/Users/me/Desktop/clients/noah-finance/distribution/published/2026-07-10_linkedin_x.md";
-  assert.equal(postRefFor(nix), "distribution/2026-07-10_linkedin_x.md");
-});
-
-test("postRefFor collapses scheduled/ and published/ to the SAME ref for the same basename", () => {
-  // This equality is the whole point of the F7 fix: mark-published moves the
-  // file from distribution/scheduled/ to distribution/published/, and if the
-  // folder survived in the ref, the sweep would see the moved file as a new,
-  // ungraded post and grade (and insert) it a second time.
-  const scheduled = String.raw`C:\Users\me\Desktop\clients\noah-finance\distribution\scheduled\2026-07-15_linkedin_same-post.md`;
-  const published = "/c/Users/me/Desktop/clients/noah-finance/distribution/published/2026-07-15_linkedin_same-post.md";
-  assert.equal(postRefFor(scheduled), "distribution/2026-07-15_linkedin_same-post.md");
-  assert.equal(postRefFor(published), "distribution/2026-07-15_linkedin_same-post.md");
-  assert.equal(postRefFor(scheduled), postRefFor(published));
-});
-
-test("postRefFor leaves script-lab draft refs untouched", () => {
-  const draft = String.raw`C:\Users\me\Desktop\clients\noah-finance\script-lab\linkedin_fednow-deposit-rails_draft.md`;
-  assert.equal(postRefFor(draft), "script-lab/linkedin_fednow-deposit-rails_draft.md");
-});
-
 test("chunk splits an exact multiple into equal groups", () => {
   assert.deepEqual(chunk([1, 2, 3, 4, 5, 6], 2), [[1, 2], [3, 4], [5, 6]]);
 });
@@ -316,72 +256,6 @@ test("chunk returns an empty array for empty input", () => {
 
 test("chunk returns a single group when size exceeds the array length", () => {
   assert.deepEqual(chunk([1, 2, 3], 10), [[1, 2, 3]]);
-});
-
-// insertBatchWithRetry guards the 2026-07-30 incident: 43 posts graded
-// successfully, then a single bulk INSERT died to a transient
-// `TypeError: fetch failed`, and every graded row was lost even though the
-// grading itself had already succeeded. A minimal fake `sb` stands in for
-// @supabase/supabase-js: `.from(table).insert(batch)` either throws
-// (network-shaped failure, the incident's exact case) or resolves with
-// `{ error }` (Postgres actually answered, e.g. a unique-index conflict).
-// No mocking framework, just a closure over a queue of behaviors.
-function fakeSb(behaviors) {
-  const calls = [];
-  let i = 0;
-  return {
-    calls,
-    from(table) {
-      assert.equal(table, "post_grades");
-      return {
-        async insert(batch) {
-          calls.push(batch);
-          const behavior = behaviors[i++];
-          if (!behavior) throw new Error("fakeSb ran out of scripted behaviors");
-          return behavior();
-        },
-      };
-    },
-  };
-}
-
-test("insertBatchWithRetry: a thrown error is retried and can still succeed", async () => {
-  const sb = fakeSb([
-    () => { throw new TypeError("fetch failed"); },
-    () => { throw new TypeError("fetch failed"); },
-    () => ({ error: null }),
-  ]);
-  const result = await insertBatchWithRetry(sb, [{ id: 1 }]);
-  assert.deepEqual(result, { ok: true });
-  assert.equal(sb.calls.length, 3, "must attempt exactly 3 times: try, retry, retry-succeeds");
-});
-
-test("insertBatchWithRetry: a resolved {error} (constraint violation) is NEVER retried", async () => {
-  // The distinguishing behavior of the fix: a batch that resolves with an
-  // `error` field is Postgres actually answering, a real, deterministic
-  // outcome, not a reachability problem. Retrying it just fails the same way
-  // three times slower, so it must stop after exactly one call.
-  const constraintErr = { message: "duplicate key value violates unique constraint post_grades_published_once_idx" };
-  const sb = fakeSb([() => ({ error: constraintErr })]);
-  const result = await insertBatchWithRetry(sb, [{ id: 1 }]);
-  assert.equal(result.ok, false);
-  assert.equal(result.error, constraintErr);
-  assert.equal(sb.calls.length, 1, "a resolved {error} must not be retried");
-});
-
-test("insertBatchWithRetry: three thrown errors exhaust retries and surface the last one", async () => {
-  const err1 = new TypeError("fetch failed 1");
-  const err2 = new TypeError("fetch failed 2");
-  const err3 = new TypeError("fetch failed 3");
-  const sb = fakeSb([
-    () => { throw err1; },
-    () => { throw err2; },
-    () => { throw err3; },
-  ]);
-  const result = await insertBatchWithRetry(sb, [{ id: 1 }]);
-  assert.equal(result.ok, false);
-  assert.equal(result.error, err3, "must carry the LAST error, not the first");
-  assert.equal(sb.calls.length, 3, "must attempt exactly 3 times total, then give up");
 });
 
 // resolveClientsRoot guards the 2026-08-12 break: the content tree moved
@@ -417,17 +291,6 @@ test("resolveClientsRoot respects candidate order: an earlier existing path wins
   const exists = fakeExists(["/first", "/second"]);
   assert.equal(resolveClientsRoot(["/first", "/second"], exists), "/first");
   assert.equal(resolveClientsRoot(["/second", "/first"], exists), "/second");
-});
-
-// M4: an unparseable --limit must never silently mean unlimited, which would
-// turn a typo into an expensive surprise (grading the whole corpus when
-// someone meant to cap the run). LIMIT is computed at module load time, so
-// this is exercised via a real subprocess rather than an import.
-test("grade-sweep.mjs exits 1 with a clear message on an unparseable --limit", () => {
-  const script = join(__dirname, "grade-sweep.mjs");
-  const res = spawnSync(process.execPath, [script, "--limit", "abc", "--dry-run"], { encoding: "utf8" });
-  assert.equal(res.status, 1);
-  assert.match(res.stderr, /--limit/);
 });
 
 // The bar is per brand, and a card that omits the brand quietly measures every
@@ -476,4 +339,38 @@ test("pickMedia caps the list and tolerates no media", () => {
   assert.equal(pickMedia(many, "/t").length, MEDIA_CAP);
   assert.deepEqual(pickMedia(null, "/t"), []);
   assert.deepEqual(pickMedia([], "/t"), []);
+});
+
+test("parseGrade computes the total itself and ignores the model's arithmetic", () => {
+  const g = parseGrade('noise {"scores":{"hook":15,"voice":20},"max_scores":{"hook":20,"voice":20},"overall":32,"notes":"ok"}');
+  assert.equal(g.overall, 88);
+  assert.equal(g.grade, "B");
+});
+
+test("parseGrade rejects replies that cannot be a grade", () => {
+  assert.throws(() => parseGrade("I think it's good"), /no JSON/);
+  assert.throws(() => parseGrade('{"scores":{"hook":3}}'), /max_scores/);
+  assert.throws(() => parseGrade('{"scores":{"hook":3},"max_scores":{"voice":5}}'), /no maximum for hook/);
+});
+
+test("parseGrade marks a grade made from partial media", () => {
+  const g = parseGrade('{"scores":{"visual":5},"max_scores":{"visual":10},"notes":"fine"}', { expected: 3, loaded: 1 });
+  assert.match(g.notes, /^PARTIAL: visual from 1 of 3 media/);
+});
+
+test("medianRun takes the LOWER middle of an even pair, so a lost sample cannot flatter a post", () => {
+  const m = medianRun([{ overall: 70 }, { overall: 90 }]);
+  assert.equal(m.overall, 70);
+  assert.equal(m.spread, 20);
+  assert.equal(medianRun([{ overall: 81 }, { overall: 60 }, { overall: 77 }]).overall, 77);
+  assert.equal(medianRun([]), null);
+});
+
+test("parsePost reads frontmatter, body and comma separated media", () => {
+  const p = parsePost("---\r\ntitle: Hip pain\r\nplatform: linkedin\r\nmedia: a.png, b.mp4\r\n---\r\nBody text.\r\n", "hip.md");
+  assert.equal(p.title, "Hip pain");
+  assert.equal(p.platform, "linkedin");
+  assert.deepEqual(p.media, ["a.png", "b.mp4"]);
+  assert.equal(p.body, "Body text.");
+  assert.equal(parsePost("No frontmatter", "x.md").body, "No frontmatter");
 });

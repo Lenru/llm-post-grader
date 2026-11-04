@@ -334,3 +334,94 @@ export function formatReportCard({ summary, recent = [], prevSummary = null, ski
   const body = postLines.length ? `${head}\n\n${postLines.join("\n")}` : head;
   return `${body}${tail}`.slice(0, DISCORD_BUDGET);
 }
+
+/**
+ * One model reply -> a validated grade. Throws with the reason when the reply
+ * is unusable, so the caller can retry rather than store a quiet zero.
+ *
+ * The envelope is checked, not the dimension list: each brand's rubric names
+ * its own dimensions and its own scale, so asserting a fixed set here would
+ * just reimpose one brand's shape on everyone.
+ */
+export function parseGrade(text, { expected = 0, loaded = 0 } = {}) {
+  const match = String(text ?? "").match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("no JSON in output");
+
+  let parsed;
+  try { parsed = JSON.parse(match[0]); }
+  catch { throw new Error("unparseable JSON"); }
+
+  const numeric = (o) =>
+    o && typeof o === "object" && !Array.isArray(o) &&
+    Object.keys(o).length > 0 &&
+    Object.values(o).every((v) => Number.isFinite(Number(v)));
+
+  if (!numeric(parsed.scores)) throw new Error("scores unusable");
+  if (!numeric(parsed.max_scores)) throw new Error("max_scores missing");
+
+  const scores = Object.fromEntries(Object.entries(parsed.scores).map(([k, v]) => [k, Number(v)]));
+  const maxes = Object.fromEntries(Object.entries(parsed.max_scores).map(([k, v]) => [k, Number(v)]));
+
+  // Every scored dimension needs a maximum, or the total is computed against a
+  // denominator that silently omits it.
+  const missing = Object.keys(scores).filter((k) => !(k in maxes));
+  if (missing.length) throw new Error(`no maximum for ${missing.join(", ")}`);
+
+  const got = Object.values(scores).reduce((a, n) => a + n, 0);
+  const possible = Object.keys(scores).reduce((a, k) => a + maxes[k], 0);
+  if (possible <= 0) throw new Error("rubric maximum is zero");
+
+  // Computed here, never taken from the model. The first run of this grader
+  // returned scores summing to 42 alongside an "overall" of 32: the numbers
+  // were right and the addition was wrong. A grade that gates publishing
+  // cannot rest on arithmetic nobody checked.
+  const overall = Math.max(0, Math.min(100, Math.round((got / possible) * 100)));
+  const partial = expected > loaded;
+  const notes = String(parsed.notes ?? "");
+
+  return {
+    scores,
+    overall,
+    // Recomputed rather than trusted: the band must follow from the number, or
+    // the report card and the publish gate can disagree about the same post.
+    grade: bandFor(overall),
+    // Enforced here too, so a partial grade is marked even if the model forgets.
+    notes: ((partial && !/^PARTIAL/.test(notes) ? `PARTIAL: visual from ${loaded} of ${expected} media. ` : "") + notes).slice(0, 1000),
+  };
+}
+
+/**
+ * The median of several grading runs of the same post, plus how far they spread.
+ *
+ * With an EVEN number of usable runs, sorted[len/2] is the upper of the two
+ * middles, not the middle. That is not a rounding nit: when one of three
+ * samples fails to parse, the survivor pair silently returns its maximum, and
+ * two posts jumped 23 and 25 points between runs partly because of it. Take
+ * the lower middle instead, so a lost sample cannot flatter a post.
+ */
+export function medianRun(runs) {
+  if (!runs.length) return null;
+  const sorted = [...runs].sort((a, b) => a.overall - b.overall);
+  return {
+    ...sorted[Math.floor((sorted.length - 1) / 2)],
+    samples: runs.length,
+    spread: sorted[sorted.length - 1].overall - sorted[0].overall,
+  };
+}
+
+/** A markdown post with simple `key: value` frontmatter. `media` is comma separated. */
+export function parsePost(raw, ref) {
+  const text = String(raw).replace(/\r\n/g, "\n");
+  const fm = text.match(/^---\n([\s\S]*?)\n---\n?/);
+  const meta = {};
+  for (const line of (fm?.[1] ?? "").split("\n")) {
+    const i = line.indexOf(":");
+    if (i > 0) meta[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+  }
+  return {
+    ...meta,
+    post_ref: ref,
+    body: (fm ? text.slice(fm[0].length) : text).trim(),
+    media: meta.media ? meta.media.split(",").map((s) => s.trim()).filter(Boolean) : [],
+  };
+}
